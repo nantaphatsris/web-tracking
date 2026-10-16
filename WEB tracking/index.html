@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Night Sky Tracker - Backend Template</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: #090d12;
+      color: #edf2f7;
+      font-family: Arial, sans-serif;
+    }
+
+    header {
+      padding: 20px;
+      border-bottom: 1px solid #26313d;
+    }
+
+    h1 {
+      font-size: 18px;
+      margin: 0;
+    }
+
+    main {
+      max-width: 600px;
+      margin: auto;
+      padding: 16px;
+    }
+
+    .camera-view {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      background: #030609;
+      border: 1px solid #354352;
+      border-radius: 12px;
+      overflow: hidden;
+      touch-action: manipulation;
+    }
+
+    video {
+      display: none;
+    }
+
+    canvas#canvasOutput {
+      display: block;
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+    }
+
+    /* วงกลมอ้างอิงตรงกลาง (0, 0) */
+    .crosshair {
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      border: 2px solid #6000fb;
+      border-radius: 50%;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+      z-index: 2;
+    }
+
+    .crosshair::before {
+      content: "";
+      position: absolute;
+      width: 5px;
+      height: 5px;
+      background: #0bf4ec;
+      border-radius: 50%;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    /* กล่องแสดงพิกัด */
+    .coordinates {
+      position: absolute;
+      left: 12px;
+      bottom: 12px;
+      padding: 8px 10px;
+      background: rgba(0, 0, 0, 0.8);
+      color: #0bf4ec;
+      font-size: 13px;
+      font-family: monospace;
+      line-height: 1.8;
+      border: 1px solid #26313d;
+      border-radius: 6px;
+      pointer-events: none;
+      z-index: 3;
+    }
+
+    .controls {
+      margin-top: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .template-preview-box {
+      background: #101721;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid #26313d;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .template-preview-box img {
+      width: 50px;
+      height: 50px;
+      object-fit: contain;
+      background: #000;
+      border: 1px solid #354352;
+      border-radius: 6px;
+    }
+
+    button {
+      width: 100%;
+      padding: 14px;
+      border: none;
+      border-radius: 8px;
+      background: #0bf4ec;
+      color: #10241a;
+      font-size: 15px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      background: #354352;
+      color: #888;
+      cursor: not-allowed;
+    }
+
+    button:active:not(:disabled) {
+      opacity: 0.8;
+    }
+
+    #status {
+      color: #9eacbd;
+      font-size: 13px;
+      margin-top: 12px;
+      line-height: 1.6;
+    }
+
+    .hint {
+      color: #9eacbd;
+      font-size: 12px;
+      line-height: 1.6;
+      margin-top: 10px;
+    }
+  </style>
+
+  <!-- โหลด OpenCV.js -->
+  <script async src="https://docs.opencv.org/4.x/opencv.js" onload="onOpenCvReady();"></script>
+</head>
+
+<body>
+  <header>
+    <h1>✳ NIGHT SKY TRACKER - BACKEND TEMPLATE</h1>
+  </header>
+
+  <main>
+    <div class="camera-view" id="cameraView">
+      <video id="camera" autoplay playsinline muted></video>
+      <canvas id="canvasOutput"></canvas>
+
+      <!-- จุดกำเนิดพิกัด (0,0) -->
+      <div class="crosshair"></div>
+
+      <!-- แสดงพิกัด -->
+      <div class="coordinates">
+        Target Detected: <span id="detectedStatus" style="color: #ff4d4d;">NO</span><br>
+        X: <span id="coordX">0</span> px<br>
+        Y: <span id="coordY">0</span> px
+      </div>
+    </div>
+
+    <div class="controls">
+      <!-- ตัวอย่างแสดงรูปภาพต้นแบบที่โหลดมาจาก Backend -->
+      <div class="template-preview-box">
+        <img id="templatePreview" src="" alt="Backend Template">
+        <div style="font-size: 12px; color: #9eacbd;">
+          <strong>ภาพต้นแบบ ( Backend ):</strong><br>
+          <span id="templateInfo">กำลังโหลดภาพ...</span>
+        </div>
+      </div>
+
+      <button id="startCamera" disabled>กำลังเตรียมระบบ...</button>
+    </div>
+
+    <div id="status">สถานะ: รอโหลด OpenCV.js และภาพต้นแบบ</div>
+
+    <div class="hint">
+      * จุดกึ่งกลางหน้าจอคือพิกัด (0, 0)<br>
+      * เมื่อส่องเจอภาพต้นแบบ ระบบจะวาดกรอบสีเขียวและระบุตำแหน่งเทียบกับจุดกึ่งกลางให้อัตโนมัติ
+    </div>
+
+    <!-- Canvas ซ่อนไว้สำหรับแปลงรูปภาพต้นแบบเป็น Mat -->
+    <canvas id="templateCanvas" style="display: none;"></canvas>
+  </main>
+
+  <script>
+    // ==========================================
+    // 📌 กำหนด PATH ภาพต้นแบบที่เก็บไว้ใน Backend / Server
+    // ==========================================
+    const BACKEND_TEMPLATE_URL = "assets/target.png"; // เปลี่ยนที่อยู่นี้ตามตำแหน่งไฟล์จริงในระบบของคุณ
+
+    const camera = document.getElementById("camera");
+    const canvasOutput = document.getElementById("canvasOutput");
+    const button = document.getElementById("startCamera");
+    const status = document.getElementById("status");
+    const coordX = document.getElementById("coordX");
+    const coordY = document.getElementById("coordY");
+    const detectedStatus = document.getElementById("detectedStatus");
+    const templatePreview = document.getElementById("templatePreview");
+    const templateInfo = document.getElementById("templateInfo");
+
+    let stream = null;
+    let isOpenCvReady = false;
+    let isTemplateLoaded = false;
+    let isProcessing = false;
+
+    let srcMat = null;
+    let templateMat = null;
+    let graySrc = null;
+    let grayTemplate = null;
+    let matchResult = null;
+
+    // 1. เรียกเมื่อ OpenCV.js โหลดเสร็จสิ้น
+    function onOpenCvReady() {
+      isOpenCvReady = true;
+      checkReadyStatus();
+      loadBackendTemplate(BACKEND_TEMPLATE_URL);
+    }
+
+    // 2. โหลดภาพต้นแบบจาก Backend
+    function loadBackendTemplate(url) {
+      status.textContent = "สถานะ: กำลังโหลดภาพต้นแบบจาก Server...";
+      
+      const img = new Image();
+      img.crossOrigin = "Anonymous"; // รองรับกรณีโหลดภาพข้าม Domain
+      img.src = url;
+
+      img.onload = () => {
+        const templateCanvas = document.getElementById("templateCanvas");
+        templateCanvas.width = img.width;
+        templateCanvas.height = img.height;
+        const ctx = templateCanvas.getContext("2d");
+        ctx.drawImage(img, 0, 0);
+
+        // แปลงภาพต้นแบบเป็น OpenCV Mat
+        if (templateMat) templateMat.delete();
+        if (grayTemplate) grayTemplate.delete();
+
+        templateMat = cv.imread(templateCanvas);
+        grayTemplate = new cv.Mat();
+        cv.cvtColor(templateMat, grayTemplate, cv.COLOR_RGBA2GRAY);
+
+        isTemplateLoaded = true;
+        templatePreview.src = url;
+        templateInfo.textContent = `${img.width} x ${img.height} px`;
+        
+        checkReadyStatus();
+      };
+
+      img.onerror = () => {
+        status.textContent = "ข้อผิดพลาด: ไม่สามารถโหลดภาพต้นแบบจาก " + url + " ได้ (ตรวจสอบ Path หรือไฟล์ภาพ)";
+        templateInfo.textContent = "โหลดภาพไม่สำเร็จ";
+      };
+    }
+
+    // ตรวจสอบความพร้อมทั้ง OpenCV และภาพต้นแบบ
+    function checkReadyStatus() {
+      if (isOpenCvReady && isTemplateLoaded) {
+        status.textContent = "สถานะ: ระบบพร้อมทำงาน เปิดกล้องเพื่อส่องหาภาพ";
+        button.textContent = "เปิดกล้องส่องหา";
+        button.disabled = false;
+      }
+    }
+
+    // แสดงค่าพิกัดบน UI
+    function displayCoordinates(x, y, isFound) {
+      coordX.textContent = Math.round(x);
+      coordY.textContent = Math.round(y);
+      if (isFound) {
+        detectedStatus.textContent = "YES";
+        detectedStatus.style.color = "#0bf4ec";
+      } else {
+        detectedStatus.textContent = "NO";
+        detectedStatus.style.color = "#ff4d4d";
+      }
+    }
+
+    // ฟังก์ชันประมวลผล Real-time Detection
+    function processVideo() {
+      if (!isProcessing) return;
+
+      const width = camera.videoWidth;
+      const height = camera.videoHeight;
+
+      if (width === 0 || height === 0) {
+        requestAnimationFrame(processVideo);
+        return;
+      }
+
+      if (canvasOutput.width !== width || canvasOutput.height !== height) {
+        canvasOutput.width = width;
+        canvasOutput.height = height;
+      }
+
+      const ctx = canvasOutput.getContext("2d");
+      ctx.drawImage(camera, 0, 0, width, height);
+
+      if (grayTemplate && !grayTemplate.empty()) {
+        try {
+          srcMat = cv.imread(canvasOutput);
+          graySrc = new cv.Mat();
+          cv.cvtColor(srcMat, graySrc, cv.COLOR_RGBA2GRAY);
+
+          if (grayTemplate.cols <= graySrc.cols && grayTemplate.rows <= graySrc.rows) {
+            matchResult = new cv.Mat();
+            cv.matchTemplate(graySrc, grayTemplate, matchResult, cv.TM_CCOEFF_NORMED);
+
+            const result = cv.minMaxLoc(matchResult);
+            const maxVal = result.maxVal;
+            const maxLoc = result.maxLoc;
+
+            const threshold = 0.7; // ตั้งความแม่นยำ (0.7 = 70%)
+
+            if (maxVal >= threshold) {
+              const point1 = new cv.Point(maxLoc.x, maxLoc.y);
+              const point2 = new cv.Point(maxLoc.x + grayTemplate.cols, maxLoc.y + grayTemplate.rows);
+
+              // วาดกรอบสี่เหลี่ยมสีเขียว
+              cv.rectangle(srcMat, point1, point2, [11, 244, 236, 255], 3);
+
+              // คำนวณพิกัดเทียบกับจุดกึ่งกลางหน้าจอ (0, 0)
+              const objectCenterX = maxLoc.x + grayTemplate.cols / 2;
+              const objectCenterY = maxLoc.y + grayTemplate.rows / 2;
+
+              const screenCenterX = width / 2;
+              const screenCenterY = height / 2;
+
+              const relX = objectCenterX - screenCenterX;
+              const relY = screenCenterY - objectCenterY;
+
+              displayCoordinates(relX, relY, true);
+            } else {
+              displayCoordinates(0, 0, false);
+            }
+
+            matchResult.delete();
+          }
+
+          cv.imshow("canvasOutput", srcMat);
+          srcMat.delete();
+          graySrc.delete();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      requestAnimationFrame(processVideo);
+    }
+
+    // ปุ่มเปิด/ปิด กล้อง
+    button.addEventListener("click", async () => {
+      if (!isOpenCvReady || !isTemplateLoaded) return;
+
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) {
+          throw new Error("เบราว์เซอร์ไม่รองรับการเปิดกล้อง (กรุณารันผ่าน HTTPS หรือ localhost)");
+        }
+
+        if (stream) {
+          isProcessing = false;
+          stream.getTracks().forEach(track => track.stop());
+          stream = null;
+          button.textContent = "เปิดกล้องส่องหา";
+          status.textContent = "สถานะ: ปิดกล้องแล้ว";
+          return;
+        }
+
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: "environment" } },
+          audio: false
+        });
+
+        camera.srcObject = stream;
+        await camera.play();
+
+        isProcessing = true;
+        status.textContent = "สถานะ: กล้องกำลังทำงาน ค้นหาภาพต้นแบบจาก Server...";
+        button.textContent = "ปิดกล้อง";
+
+        requestAnimationFrame(processVideo);
+
+      } catch (error) {
+        status.textContent = "เปิดกล้องไม่สำเร็จ: " + error.message;
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+        stream = null;
+        isProcessing = false;
+      }
+    });
+  </script>
+</body>
+</html>
